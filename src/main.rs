@@ -2,7 +2,7 @@ mod world;
 
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_fly_camera::{self, FlyCamera, FlyCameraPlugin};
-use world::chunk::{ChunkPlugin, ChunkBundle, Chunk};
+use world::chunk::{ChunkPlugin, ChunkBundle, Chunk, AXIS_SIZE};
 
 fn main() {
     App::new()
@@ -32,24 +32,20 @@ fn setup(
     })
     .insert(FlyCamera::default());
 
-    commands.spawn_bundle(ChunkBundle {
-        chunk: Chunk::new_empty(),
-        pbr: PbrBundle {
-            mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
-            material: materials.add(Color::DARK_GREEN.into()),
-            ..Default::default()
-        }
-    });
 
-    commands.spawn_bundle(ChunkBundle {
-        chunk: Chunk::new_empty(),
-        pbr: PbrBundle {
-            mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
-            transform: Transform::from_xyz(15.0, 0.0, 0.0),
-            material: materials.add(Color::DARK_GREEN.into()),
-            ..Default::default()
+    for i in 0..=10 {
+        for j in 0..=10 {
+            commands.spawn_bundle(ChunkBundle {
+                chunk: Chunk::new_empty(),
+                pbr: PbrBundle {
+                    mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
+                    transform: Transform::from_xyz(((AXIS_SIZE-1) * i) as f32, 0.0, ((AXIS_SIZE-1) * j) as f32),
+                    material: materials.add(Color::DARK_GREEN.into()),
+                    ..Default::default()
+                }
+            });
         }
-    });
+    }
 
     const HALF_SIZE: f32 = 10.0;
     commands.spawn_bundle(DirectionalLightBundle {
