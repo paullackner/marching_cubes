@@ -1,6 +1,9 @@
 use bevy::{prelude::*, math::Vec4Swizzles, render::{render_resource::PrimitiveTopology, mesh::{VertexAttributeValues, Indices}}};
+use bevy_mod_raycast::RayCastMesh;
+use opensimplex_noise_rs::OpenSimplexNoise;
 use rand::prelude::*;
-use std::fmt;
+
+use crate::ChunkRayCastSet;
 
 use super::marching_cubes_tables::{TRI_TABLE, CORNER_INDEX_AFROM_EDGE, CORNER_INDEX_BFROM_EDGE};
 
@@ -16,7 +19,7 @@ pub const Y_SHIFT: usize = 8;
 pub const Z_SHIFT: usize = 4;
 pub const X_SHIFT: usize = 0;
 
-pub const ISO_LEVEL: u8 = 128;
+pub const ISO_LEVEL: f32 = 0.0;
 
 
 pub fn to_index(local: IVec3) -> usize {
@@ -40,28 +43,27 @@ fn from_index(index: usize) -> IVec3 {
 //  0-------1
 //      e0
 
-pub fn gen_cube(start: IVec3) -> [IVec3; 8] {
+pub fn gen_cube(start: Vec3) -> [Vec3; 8] {
     [
         /*0*/start,
-        /*1*/IVec3::new(start.x + 1, start.y, start.z),
-        /*2*/IVec3::new(start.x + 1, start.y, start.z + 1),
-        /*3*/IVec3::new(start.x, start.y, start.z + 1),
-        /*4*/IVec3::new(start.x, start.y + 1, start.z),
-        /*5*/IVec3::new(start.x + 1, start.y + 1, start.z),
-        /*6*/IVec3::new(start.x + 1, start.y + 1, start.z + 1),
-        /*7*/IVec3::new(start.x, start.y + 1, start.z + 1),
+        /*1*/Vec3::new(start.x + 1.0, start.y, start.z),
+        /*2*/Vec3::new(start.x + 1.0, start.y, start.z + 1.0),
+        /*3*/Vec3::new(start.x, start.y, start.z + 1.0),
+        /*4*/Vec3::new(start.x, start.y + 1.0, start.z),
+        /*5*/Vec3::new(start.x + 1.0, start.y + 1.0, start.z),
+        /*6*/Vec3::new(start.x + 1.0, start.y + 1.0, start.z + 1.0),
+        /*7*/Vec3::new(start.x, start.y + 1.0, start.z + 1.0),
     ]
 }
 
-fn interpolate_verts(v1: IVec4, v2: IVec4) -> Vec3{
-    let t = (ISO_LEVEL as i32 - v1.w) as f32 / (v2.w - v1.w) as f32;
-    println!("{v1}{v2}");
-    v1.xyz().as_vec3() + t * (v2.xyz() - v1.xyz()).as_vec3()
+fn interpolate_verts(v1: Vec4, v2: Vec4) -> Vec3{
+    let t = (ISO_LEVEL - v1.w) / (v2.w - v1.w);
+    v1.xyz() + t * (v2.xyz() - v1.xyz())
 }
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Chunk {
-    points: [u8; BUFFER_SIZE],
+    points: [f32; BUFFER_SIZE],
     dirty: bool,
 }
 
@@ -74,22 +76,28 @@ impl Default for Chunk {
 
 impl Chunk {
     pub fn new_empty() -> Self {
-        Self {points: [0; BUFFER_SIZE], dirty: false}
+        Self {points: [-1.0; BUFFER_SIZE], dirty: false}
     }
 
-    pub fn get_cube(self, pos: IVec3) -> [IVec4; 8] {
+    pub fn new_filled() -> Self{
+
+
+        Self {points: [-1.0; BUFFER_SIZE], dirty: true}
+    }
+
+    pub fn get_cube(self, pos: Vec3) -> [Vec4; 8] {
         // if pos.max_element() > 14 {
         //     return [IVec4::ZERO; 8];
         // }
         
         
         let cube = gen_cube(pos);
-        cube.map(|x| { IVec4::new(x.x, x.y, x.z, self.points[to_index(x)] as i32) })
+        cube.map(|x| { Vec4::new(x.x, x.y, x.z, self.points[to_index(x.as_ivec3())]) })
     
     }
 
-    pub fn set_point(mut self, pos: IVec3, value: u8) {
-        self.points[to_index(pos)] = value;
+    pub fn set_point(mut self, pos: Vec3, value: f32) {
+        self.points[to_index(pos.as_ivec3())] = value;
         self.dirty = true;
     }
 }
@@ -133,28 +141,29 @@ impl Plugin for ChunkPlugin {
 }
 
 fn march_cubes_system(
-    mut query: Query<(&Handle<Mesh>, &mut Chunk)>,
+    mut query: Query<(Entity, &Handle<Mesh>, &mut Chunk)>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut commands: Commands,
 ) {
-    for (mesh_handle, mut chunk) in query.iter_mut() {
+    for (entity, mesh_handle, mut chunk) in query.iter_mut() {
         if !chunk.dirty {continue;}
         let mut vertices: Vec<[f32; 3]> = Vec::new();
 
         for i in 0..BUFFER_SIZE-1 {
             if from_index(i).max_element() >= 15 {continue;}
-            let points = chunk.get_cube(from_index(i));
+            let points = chunk.get_cube(from_index(i).as_vec3());
             
 
             let mut index = 0;
             
-            if points[0].w as u8 > ISO_LEVEL {index |= 1}
-            if points[1].w as u8 > ISO_LEVEL {index |= 2}
-            if points[2].w as u8 > ISO_LEVEL {index |= 4}
-            if points[3].w as u8 > ISO_LEVEL {index |= 8}
-            if points[4].w as u8 > ISO_LEVEL {index |= 16}
-            if points[5].w as u8 > ISO_LEVEL {index |= 32}
-            if points[6].w as u8 > ISO_LEVEL {index |= 64}
-            if points[7].w as u8 > ISO_LEVEL {index |= 128}
+            if points[0].w > ISO_LEVEL {index |= 1}
+            if points[1].w > ISO_LEVEL {index |= 2}
+            if points[2].w > ISO_LEVEL {index |= 4}
+            if points[3].w > ISO_LEVEL {index |= 8}
+            if points[4].w > ISO_LEVEL {index |= 16}
+            if points[5].w > ISO_LEVEL {index |= 32}
+            if points[6].w > ISO_LEVEL {index |= 64}
+            if points[7].w > ISO_LEVEL {index |= 128}
             
             if index == 0 { continue; }
             // print!("{}/{i}={}~{}: ",from_index(i),chunk.points[i],to_index(from_index(i)));
@@ -216,23 +225,31 @@ fn march_cubes_system(
         
         *meshes.get_mut(mesh_handle.id).unwrap() = mesh;
         chunk.dirty = false;
+        commands.entity(entity).insert(RayCastMesh::<ChunkRayCastSet>::default());
     }
 }
 
 fn set_points_system(
-    mut query: Query<&mut Chunk>,
+    mut query: Query<(&mut Chunk, &Transform)>,
     key: Res<Input<KeyCode>>,
 ) {
     let mut rng = thread_rng();
 
     if key.just_pressed(KeyCode::G){
-        for mut chunk in query.iter_mut() {
+        for (mut chunk, transform) in query.iter_mut() {
             for i in 0..BUFFER_SIZE-1 {
-                if from_index(i).y < rng.gen_range(3..5) {
-                    chunk.points[i] = rng.gen_range(130..200);
-                }
-                chunk.dirty = true;
+                chunk.points[i] = calc_iso(transform.translation + from_index(i).as_vec3());
             }
+            chunk.dirty = true;   
         }
     }
+}
+
+fn calc_iso(point: Vec3) -> f32{
+    let simplex = OpenSimplexNoise::new(Some(69420));
+    let scale = 0.044;
+
+    let map = simplex.eval_2d(point.x as f64 * scale, point.z as f64 * scale) as f32;
+
+    map+1.0 - point.y * scale as f32
 }

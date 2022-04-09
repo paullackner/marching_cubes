@@ -9,6 +9,8 @@ edition = "2021"
 bevy = "0.6.1"
 bevy_fly_camera = "0.8.0"
 rand = "0.8.5"
+opensimplex_noise_rs = "0.3.0"
+bevy_mod_raycast = "0.3.9"
 
 [profile.dev]
 opt-level = 1
