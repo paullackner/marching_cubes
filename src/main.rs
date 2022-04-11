@@ -3,13 +3,11 @@ mod world;
 use bevy::{prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_fly_camera::{self, FlyCamera, FlyCameraPlugin};
 use world::chunk::{ChunkPlugin, ChunkBundle, Chunk, AXIS_SIZE};
-use bevy_mod_raycast::{DefaultPluginState, DefaultRaycastingPlugin, RayCastMesh, RayCastSource};
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(FlyCameraPlugin)
-        .add_plugin(DefaultRaycastingPlugin::<ChunkRayCastSet>::default())
         .add_plugin(ChunkPlugin)
         .add_startup_system(setup)
         .add_system(cursor_grab_system)
@@ -17,7 +15,6 @@ fn main() {
         .run();
 }
 
-struct ChunkRayCastSet;
 
 fn setup(
     mut commands: Commands,
@@ -32,16 +29,15 @@ fn setup(
     });
 
     commands.spawn_bundle(PerspectiveCameraBundle {
-        transform: Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_xyz(0.0, 100.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..Default::default()
     })
-    .insert(RayCastSource::<ChunkRayCastSet>::new_transform_empty())
     .insert(FlyCamera::default());
 
 
-    for x in 0..=20 {
-        for y in 0..=3 {
-            for z in 0..=20 {
+    for x in 0..=5 {
+        for y in 0..=4 {
+            for z in 0..=5 {
                 commands.spawn_bundle(ChunkBundle {
                     chunk: Chunk::new_empty(),
                     pbr: PbrBundle {
@@ -96,18 +92,5 @@ fn cursor_grab_system(
     if key.just_pressed(KeyCode::Escape) {
         window.set_cursor_lock_mode(false);
         window.set_cursor_visibility(true);
-    }
-}
-
-fn terrain_edit(
-    time: Res<Time>, 
-    mut query: Query<&mut Transform, With<RayCastSource<ChunkRayCastSet>>>,
-    // btn: Res<Input<MouseButton>>,
-) {
-    for mut transform in query.iter_mut() {
-        *transform = Transform::from_rotation(
-            Quat::from_rotation_x(time.seconds_since_startup().sin() as f32 * 0.15)
-                * Quat::from_rotation_y((time.seconds_since_startup() * 1.5).sin() as f32 * 0.1),
-        );
     }
 }
