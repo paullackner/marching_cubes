@@ -1,8 +1,13 @@
-use std::thread;
-use bevy::{prelude::*, math::Vec4Swizzles, render::{render_resource::PrimitiveTopology, mesh::{VertexAttributeValues, Indices}}};
-use bevy::tasks::AsyncComputeTaskPool;
-use rand::prelude::*;
+use bevy::{
+    prelude::*, 
+    math::Vec4Swizzles, 
+    render::{
+        render_resource::{PrimitiveTopology, Buffer, BindGroup, ShaderModuleDescriptor, ShaderSource, BindGroupLayoutDescriptor, BindGroupLayoutEntry, ShaderStages, BindingType, BufferBindingType, BufferSize, BindGroupLayout, PipelineLayoutDescriptor, ComputePipelineDescriptor, ComputePipeline, BindGroupDescriptor, BindGroupEntry, BufferUsages, BufferDescriptor, ComputePassDescriptor}, 
+        mesh::Indices, 
+        RenderApp, 
+        render_graph::{RenderGraph, self}, renderer::{RenderDevice, RenderQueue}, RenderStage, render_component::ExtractComponent}, core_pipeline::node::MAIN_PASS_DEPENDENCIES, ecs::{entity::{self, Entities}, component::Components, archetype::Archetypes}};
 use opensimplex_noise_rs::OpenSimplexNoise;
+use std::{borrow::Cow, num::NonZeroU32};
 
 use super::marching_cubes_tables::{TRI_TABLE, CORNER_INDEX_AFROM_EDGE, CORNER_INDEX_BFROM_EDGE};
 
@@ -60,16 +65,13 @@ fn interpolate_verts(v1: Vec4, v2: Vec4) -> Vec3{
     v1.xyz() + t * (v2.xyz() - v1.xyz())
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component)]
+pub struct DirtyChunk;
+
+#[derive(Component, Clone, Debug, Copy)]
 pub struct Chunk {
     points: [f32; BUFFER_SIZE],
     dirty: bool,
-}
-
-impl Default for Chunk {
-    fn default() -> Self {
-        Self::new_empty()
-    }
 }
 
 
@@ -78,17 +80,7 @@ impl Chunk {
         Self {points: [-1.0; BUFFER_SIZE], dirty: false}
     }
 
-    pub fn new_filled() -> Self{
-
-
-        Self {points: [-1.0; BUFFER_SIZE], dirty: true}
-    }
-
     pub fn get_cube(self, pos: Vec3) -> [Vec4; 8] {
-        // if pos.max_element() > 14 {
-        //     return [IVec4::ZERO; 8];
-        // }
-        
         
         let cube = gen_cube(pos);
         cube.map(|x| { Vec4::new(x.x, x.y, x.z, self.points[to_index(x.as_ivec3())]) })
@@ -109,7 +101,7 @@ pub struct ChunkBundle {
     pub pbr: PbrBundle,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Triangle {
     pub a: Vec3,
     pub b: Vec3,
@@ -123,8 +115,226 @@ impl Plugin for ChunkPlugin {
         app
             .add_system(march_cubes_system)
             .add_system(set_points_system);
+
+        let render_app = app.sub_app_mut(RenderApp);
+
+        render_app
+            .init_resource::<ChunkPipeline>()
+            // .add_system_to_stage(RenderStage::Extract, extract_chunks)
+            .add_system_to_stage(RenderStage::Prepare, make_chunk_buffers)
+            .add_system_to_stage(RenderStage::Prepare, prepare_chunk_buffers)
+            .add_system_to_stage(RenderStage::Queue, queue_bind_group);
+
+        let mut render_graph = render_app.world.get_resource_mut::<RenderGraph>().unwrap();
+        render_graph.add_node("Chunk", DispatchChunk);
+        render_graph.add_node_edge("Chunk", MAIN_PASS_DEPENDENCIES).unwrap();
     }
 }
+
+#[derive(Component)]
+struct ChunkCumputeBuffers {
+    point_buffer: Buffer,
+    triangle_buffer: Buffer,
+}
+
+impl ChunkCumputeBuffers {
+    fn new_empty(render_device: &RenderDevice) -> Self{
+        let point_buffer = render_device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: std::mem::size_of::<f32>() as u64,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let triangle_buffer = render_device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: std::mem::size_of::<Triangle>()as u64 + std::mem::align_of::<f32>() as u64 *3,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        Self {point_buffer, triangle_buffer}
+    }
+}
+
+fn extract_chunks(
+    mut commands: Commands,
+    mut query: Query<Entity, (With<DirtyChunk>, With<Chunk>)>,
+    mut prev_len: Local<usize>,
+) {
+    let mut chunks = Vec::with_capacity(*prev_len); 
+
+    for entity in query.iter_mut() {
+        chunks.push((entity, (DirtyChunk,)));
+    }
+    
+    *prev_len = chunks.len();
+    commands.insert_or_spawn_batch(chunks);
+}
+
+fn make_chunk_buffers(
+    mut commands: Commands,
+    query: Query<Entity, (With<DirtyChunk>, Without<ChunkCumputeBuffers>)>,
+    // mut prev_len: Local<usize>,
+    render_device: Res<RenderDevice>,
+) {
+    // let mut buffers = Vec::with_capacity(*prev_len); 
+    
+    for entity in query.iter() {
+        println!("this is test");
+        commands.entity(entity).insert(ChunkCumputeBuffers::new_empty(&render_device));
+        // println!("{:?}", entity);
+    }
+    // *prev_len = buffers.len();
+    // commands.insert_or_spawn_batch(buffers)
+}
+
+fn prepare_chunk_buffers(
+    query: Query<Entity>,
+    entities: &Entities,
+    components: &Components,
+    archetypes: &Archetypes,
+) {
+    for e in query.iter() {
+        let location = entities.get(e).unwrap();
+        let archetype = archetypes.get(location.archetype_id).unwrap();
+        let mut list = archetype
+            .components()
+            .map(|id| components.get_info(id).unwrap().name())
+            .collect::<Vec<_>>();
+        
+        list.sort();
+        println!("{:?} has components: {:?}", e, list);
+    }
+}
+
+//add derive Deref in future (when in main bevy release)
+struct ChunkBindGroups(Vec<BindGroup>);
+
+fn queue_bind_group(
+    mut commands: Commands,
+    pipeline: Res<ChunkPipeline>,
+    render_device: Res<RenderDevice>,
+    mut query: Query<&ChunkCumputeBuffers>
+) {
+    let mut groups:Vec<BindGroup> = Vec::new();
+    for  chunk_buffers in query.iter_mut(){
+        let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.buffer_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: chunk_buffers.point_buffer.as_entire_binding(),
+            }, BindGroupEntry {
+                binding: 1,
+                resource: chunk_buffers.triangle_buffer.as_entire_binding()
+            }],
+        });
+        groups.push(bind_group);
+    }
+
+    commands.insert_resource(ChunkBindGroups(groups));
+}
+
+pub struct  ChunkPipeline {
+    buffer_bind_group_layout: BindGroupLayout,
+    march_pipeline: ComputePipeline,
+}
+
+impl FromWorld for ChunkPipeline {
+    fn from_world(world: &mut World) -> Self {
+        let world = world.cell();
+        // let asset_server = world.get_resource::<AssetServer>().unwrap();
+        let render_device = world.get_resource::<RenderDevice>().unwrap();
+       
+        let shader_source = include_str!("../../assets/shaders/marchig_cubes.wgsl");
+        let shader = render_device.create_shader_module(&ShaderModuleDescriptor {
+            label: None,
+            source: ShaderSource::Wgsl(shader_source.into()),
+        });
+
+        let buffer_bind_group_layout =
+            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer { 
+                        ty: BufferBindingType::Storage { read_only: true }, 
+                        has_dynamic_offset: false, 
+                        min_binding_size: BufferSize::new(std::mem::size_of::<f32>() as u64) 
+                    },
+                    count: None,
+                }, BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer { 
+                        ty: BufferBindingType::Storage { read_only: false }, 
+                        has_dynamic_offset: false, 
+                        min_binding_size: BufferSize::new(std::mem::size_of::<Triangle>()as u64 + std::mem::align_of::<f32>() as u64 *3) 
+                    },
+                    count: None,
+                }]
+            });
+
+            let pipeline_layout = render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&buffer_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+            let march_pipeline = render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: None,
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "march",
+            });
+
+        ChunkPipeline {
+            buffer_bind_group_layout,
+            march_pipeline,
+          }
+    }
+}
+
+// enum Initialized {
+//     Default,
+//     No,
+//     Yes,
+// }
+struct DispatchChunk;
+
+impl render_graph::Node for DispatchChunk {
+
+    fn run(
+        &self,
+        _graph: &mut render_graph::RenderGraphContext,
+        render_context: &mut bevy::render::renderer::RenderContext,
+        world: &World,
+    ) -> Result<(), render_graph::NodeRunError> {
+        let pipeline = world.get_resource::<ChunkPipeline>().unwrap();
+        let groups = &world.get_resource::<ChunkBindGroups>().unwrap().0;
+
+        let mut pass = render_context
+            .command_encoder
+            .begin_compute_pass(&ComputePassDescriptor::default());
+        
+        pass.set_pipeline(&pipeline.march_pipeline);
+        
+        for group in groups {
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch(8, 8, 8)
+        }
+
+        Ok(())
+    }
+}
+
+
+
+
+
+
 
 fn march_cubes_system(
     mut query: Query<(&Handle<Mesh>, &mut Chunk)>,
@@ -136,7 +346,7 @@ fn march_cubes_system(
 
         for i in 0..BUFFER_SIZE-1 {
                 if from_index(i).max_element() >= AXIS_SIZE as i32 -1 {continue;}
-                let points = chunk.get_cube(from_index(i).as_vec3());
+                let points = chunk.clone().get_cube(from_index(i).as_vec3());
                 let mut triangles: Vec<Triangle> = Vec::with_capacity(4);
 
 
@@ -202,7 +412,6 @@ fn march_cubes_system(
         
         *meshes.get_mut(mesh_handle.id).unwrap() = mesh;
         chunk.dirty = false;
-        // println!("Mesh generated");
     }
 }
 
