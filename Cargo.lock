@@ -1837,6 +1837,7 @@ dependencies = [
  "bevy",
  "bevy_fly_camera",
  "bytemuck",
+ "futures-lite",
  "opensimplex_noise_rs",
  "rand",
 ]

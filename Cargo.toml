@@ -14,6 +14,8 @@ bevy_fly_camera = "0.8.0"
 rand = "0.8.5"
 opensimplex_noise_rs = "0.3.0"
 bytemuck = "1.8.0"
+futures-lite = "1.11.3"
+
 
 [profile.dev]
 opt-level = 1

@@ -1,10 +1,15 @@
 mod world;
 
-use bevy::{prelude::*, render::{render_resource::{PrimitiveTopology, WgpuFeatures}, renderer::RenderDevice, options::WgpuOptions}, pbr::wireframe::{WireframePlugin, WireframeConfig, Wireframe}};
-use bevy_fly_camera::{self, FlyCamera, FlyCameraPlugin};
+use bevy::{
+    prelude::*, 
+    render::{render_resource::{PrimitiveTopology, WgpuFeatures}, 
+    options::WgpuOptions}, 
+    pbr::wireframe::*,
+};
+use bevy_fly_camera::*;
 use world::chunk::ChunkPlugin;
 
-use crate::world::chunk::{ChunkBundle, Chunk, AXIS_SIZE, DirtyChunk};
+use crate::world::chunk::{ChunkBundle, Chunk, AXIS_SIZE};
 
 fn main() {
     App::new()
@@ -39,7 +44,7 @@ fn setup(
     });
 
     commands.spawn_bundle(PerspectiveCameraBundle {
-        transform: Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_xyz(0.0, 20.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..Default::default()
     })
     .insert(FlyCamera::default());
@@ -69,24 +74,6 @@ fn setup(
         ..Default::default()
     });
 
-    for x in 0..=10 {
-        for y in 0..=10 {
-            for z in 0..=10 {
-                commands.spawn_bundle(ChunkBundle {
-                    chunk: Chunk::new_empty(),
-                    pbr: PbrBundle {
-                        mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
-                        transform: Transform::from_xyz(((AXIS_SIZE-1) * x) as f32, ((AXIS_SIZE-1) * y) as f32, ((AXIS_SIZE-1) * z) as f32),
-                        material: materials.add(Color::DARK_GREEN.into()),
-                        ..Default::default()
-                    }
-                })
-                // .insert(Wireframe)
-                .insert(DirtyChunk);
-                
-            }
-        }
-    }
 }
 
 fn cursor_grab_system(

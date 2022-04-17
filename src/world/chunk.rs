@@ -2,14 +2,18 @@ use bevy::{
     prelude::*, 
     math::Vec4Swizzles, 
     render::{
-        render_resource::{PrimitiveTopology, Buffer, BindGroup, ShaderModuleDescriptor, ShaderSource, BindGroupLayoutDescriptor, BindGroupLayoutEntry, ShaderStages, BindingType, BufferBindingType, BufferSize, BindGroupLayout, PipelineLayoutDescriptor, ComputePipelineDescriptor, ComputePipeline, BindGroupDescriptor, BindGroupEntry, BufferUsages, BufferDescriptor, ComputePassDescriptor, CommandEncoderDescriptor, MapMode}, 
-        mesh::{Indices, VertexAttributeValues}, 
-        RenderApp, 
-        render_graph::{RenderGraph, self}, renderer::{RenderDevice, RenderQueue}, RenderStage, render_component::ExtractComponent}, core_pipeline::node::MAIN_PASS_DEPENDENCIES, ecs::{entity::{self, Entities}, component::Components, archetype::Archetypes}, core::{cast_slice, Pod}, tasks::ComputeTaskPool};
+        render_resource::*, 
+        mesh::Indices,
+        renderer::{RenderDevice, RenderQueue}
+    }, 
+    core::{cast_slice, Pod}, tasks::{ComputeTaskPool, AsyncComputeTaskPool, Task}, pbr::wireframe::WireframeConfig,
+};
+
 use bytemuck::Zeroable;
 use opensimplex_noise_rs::OpenSimplexNoise;
-use std::iter::once;
+use std::{iter::once, sync::Arc, ops::RangeInclusive};
 use std::time::Instant;
+use futures_lite::future;
 
 
 pub const AXIS_SIZE: usize = 32;
@@ -23,8 +27,6 @@ pub const X_MASK: usize = 0b_0000_0000_0001_1111;
 pub const Y_SHIFT: usize = 10;
 pub const Z_SHIFT: usize = 5;
 pub const X_SHIFT: usize = 0;
-
-pub const ISO_LEVEL: f32 = 0.0;
 
 
 pub fn to_index(local: IVec3) -> usize {
@@ -48,27 +50,6 @@ fn from_index(index: usize) -> IVec3 {
 //  0-------1
 //      e0
 
-pub fn gen_cube(start: Vec3) -> [Vec3; 8] {
-    [
-        /*0*/start,
-        /*1*/Vec3::new(start.x + 1.0, start.y, start.z),
-        /*2*/Vec3::new(start.x + 1.0, start.y, start.z + 1.0),
-        /*3*/Vec3::new(start.x, start.y, start.z + 1.0),
-        /*4*/Vec3::new(start.x, start.y + 1.0, start.z),
-        /*5*/Vec3::new(start.x + 1.0, start.y + 1.0, start.z),
-        /*6*/Vec3::new(start.x + 1.0, start.y + 1.0, start.z + 1.0),
-        /*7*/Vec3::new(start.x, start.y + 1.0, start.z + 1.0),
-    ]
-}
-
-fn interpolate_verts(v1: Vec4, v2: Vec4) -> Vec3{
-    let t = (ISO_LEVEL - v1.w) / (v2.w - v1.w);
-    v1.xyz() + t * (v2.xyz() - v1.xyz())
-}
-
-#[derive(Component)]
-pub struct DirtyChunk;
-
 #[derive(Component, Clone, Debug, Copy)]
 pub struct Chunk {
     points: [f32; BUFFER_SIZE],
@@ -77,20 +58,10 @@ pub struct Chunk {
 
 
 impl Chunk {
+    pub fn new(points: [f32; BUFFER_SIZE], dirty: bool) -> Self { Self { points, dirty } }
+
     pub fn new_empty() -> Self {
         Self {points: [-1.0; BUFFER_SIZE], dirty: false}
-    }
-
-    pub fn get_cube(self, pos: Vec3) -> [Vec4; 8] {
-        
-        let cube = gen_cube(pos);
-        cube.map(|x| { Vec4::new(x.x, x.y, x.z, self.points[to_index(x.as_ivec3())]) })
-    
-    }
-
-    pub fn set_point(mut self, pos: Vec3, value: f32) {
-        self.points[to_index(pos.as_ivec3())] = value;
-        self.dirty = true;
     }
 }
 
@@ -114,15 +85,14 @@ pub struct ChunkPlugin;
 
 impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
-        println!("{:?}", std::mem::size_of::<Triangle>());
-
         app
             .init_resource::<ChunkPipeline>()
-            // .add_system(march_cubes_system)
-            .add_system_to_stage(CoreStage::PreUpdate, set_points_system)
-            .add_system_to_stage(CoreStage::Update, compute_mesh);
-
-            // .add_system_to_stage(RenderStage::Extract, extract_chunks)
+            .insert_resource(Arc::new(OpenSimplexNoise::new(Some(69420))))
+            .insert_resource(ChunkSpawnTimer(Timer::from_seconds(1.0, true)))
+            .add_system_to_stage(CoreStage::First, assign_generated_chunks)
+            .add_system_to_stage(CoreStage::PreUpdate, chunk_generation_system)
+            .add_system_to_stage(CoreStage::Update, compute_mesh)
+            .add_system_to_stage(CoreStage::PostUpdate, spawn_chunk_system);
     }
 }
 
@@ -252,30 +222,32 @@ fn compute_mesh(
     mut meshes: ResMut<Assets<Mesh>>,
     mut query: Query<(&mut Chunk, &Handle<Mesh>)>,
 ) {
+    let mut tri_count = 0;
+
     let start = Instant::now();
+    let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.buffer_bind_group_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: chunk_buffers.point_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: chunk_buffers.atomics_buffer.as_entire_binding()
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: chunk_buffers.triangle_buffer.as_entire_binding()
+            }
+        ],
+    });
     for (mut chunk, mesh_handle) in query.iter_mut() {
         if !chunk.dirty {continue;}
         let bytes: &[u8] = cast_slice(&chunk.points);
         render_queue.write_buffer(&chunk_buffers.point_buffer, 0, &bytes[..]);
 
-        let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.buffer_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: chunk_buffers.point_buffer.as_entire_binding(),
-                }, 
-                BindGroupEntry {
-                    binding: 1,
-                    resource: chunk_buffers.atomics_buffer.as_entire_binding()
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: chunk_buffers.triangle_buffer.as_entire_binding()
-                }
-            ],
-        });
 
         render_queue.write_buffer(&chunk_buffers.atomics_buffer, 0, cast_slice(&[0]));
 
@@ -299,6 +271,8 @@ fn compute_mesh(
         let triangles: Vec<Triangle> = Vec::from(cast_slice(&slice.get_mapped_range()[range]));
         chunk_buffers.triangle_buffer.unmap();
         
+        tri_count += triangles.len();
+
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
         
         let mut vertices: Vec<[f32; 3]> = Vec::new();
@@ -324,37 +298,109 @@ fn compute_mesh(
 
     let elapsed = start.elapsed();
     if elapsed.as_millis() < 1 {return}
-    println!("Mesh took: {:.2?}", elapsed);
+    println!("Mesh took: {:.2?} for {} triangles", elapsed, tri_count);
 }
 
-fn set_points_system(
-    mut query: Query<(&mut Chunk, &Transform)>,
-    pool: Res<ComputeTaskPool>,
-    key: Res<Input<KeyCode>>,
+struct ChunkSpawnTimer(Timer);
+
+fn spawn_chunk_system(
+    mut commands: Commands,
+    cameras: Query<&Transform, With<Camera>>,
+    chunks: Query<&Transform, With<Chunk>>,
+    mut wireframe_config: ResMut<WireframeConfig>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time>,
+    mut timer: ResMut<ChunkSpawnTimer>,
 ) {
-    if !key.just_pressed(KeyCode::G){
-        return;
-    }
-    
-    let start = Instant::now();
+    if !timer.0.tick(time.delta()).just_finished() {return}
 
-    let simplex = OpenSimplexNoise::new(Some(69420));
-    query.par_for_each_mut(&pool, 32, |(mut chunk, transform)| {
-        for i in 0..BUFFER_SIZE-1 {
-            chunk.points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
+    let mut chunk_positions: Vec<Vec3> = Vec::new();
+    chunks.for_each(|x| chunk_positions.push((x.translation / (AXIS_SIZE-1) as f32).floor()));
+
+    for transform in cameras.iter() {
+        let cam_position = (transform.translation / (AXIS_SIZE-1) as f32).floor();
+        let range_h: RangeInclusive<i32> = -5..=5;
+        let range_v: RangeInclusive<i32> = -1..=2;
+        
+        for x in range_h.clone() {
+            for y in range_v.clone() {
+                for z in range_h.clone() {
+                    let pos  = cam_position + Vec3::new(x as f32, y as f32, z as f32);
+                    
+                    if !chunk_positions.contains(&pos) {
+                        commands.spawn_bundle(ChunkBundle {
+                            chunk: Chunk::new_empty(),
+
+                            pbr: PbrBundle {
+                                mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
+                                transform: Transform::from_xyz((AXIS_SIZE-1) as f32  * pos.x , (AXIS_SIZE-1) as f32 * pos.y as f32, (AXIS_SIZE-1) as f32 * pos.z),
+                                material: materials.add(Color::DARK_GREEN.into()),
+                                ..Default::default()
+                            },
+                        });
+                    }
+                }
+            }
         }
-        chunk.dirty = true; 
-    });
+    }
+}
 
-    let elapsed = start.elapsed();
-    println!("Density took: {:.2?}", elapsed);
+fn chunk_generation_system(
+    query: Query<(Entity, &Transform), Added<Chunk>,>,
+    pool: Res<AsyncComputeTaskPool>,
+    key: Res<Input<KeyCode>>,
+    simplex: Res<Arc<OpenSimplexNoise>>,
+    mut commands: Commands
+) {
+    // if !key.just_pressed(KeyCode::G){
+    //     return;
+    // }
+    if query.is_empty() {return}
+    
+    for (entity, transform) in query.iter() {
+        let simplex = simplex.clone();
+        let transform = transform.clone();
+        let task = pool.spawn(async move {
+            let mut points = [0.0f32 ;BUFFER_SIZE];
+            for i in 0..BUFFER_SIZE-1 {
+                points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
+            }
+            Chunk {
+                points,
+                dirty: true,
+            }
+        });
+        commands.entity(entity).insert(task);
+    }
+
+    // query.par_for_each_mut(&pool, 32, |(mut chunk, transform)| {
+    //     for i in 0..BUFFER_SIZE-1 {
+    //         chunk.points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
+    //     }
+    //     chunk.dirty = true; 
+    // });
+
+}
+
+fn assign_generated_chunks(
+    mut commands: Commands,
+    mut gen_tasks: Query<(Entity, &mut Chunk, &mut Task<Chunk>)>,
+) {
+    for (entity, mut chunk, mut task) in gen_tasks.iter_mut() {
+        if let Some(new_chunk) = future::block_on(future::poll_once(&mut *task)) {
+            chunk.points = new_chunk.points;
+            chunk.dirty = new_chunk.dirty;
+            commands.entity(entity).remove::<Task<Chunk>>();
+        }
+    }
 }
 
 fn calc_iso(ws: Vec3, simplex: &OpenSimplexNoise) -> f32{
     let mut density = -ws.y;
 
     let mut freq = 0.015;
-    let mut amplitude = 20.0;
+    let mut amplitude = 10.0;
     for _ in 0..=9 {
         density += (simplex.eval_3d(ws.x as f64 * freq, ws.y as f64 * freq, ws.z as f64 * freq) as f32 + 1.0) * amplitude;
         freq *= 2.0;
