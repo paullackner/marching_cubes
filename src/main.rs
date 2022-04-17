@@ -69,9 +69,9 @@ fn setup(
         ..Default::default()
     });
 
-    for x in 0..=1 {
-        for y in 0..=0 {
-            for z in 0..=1 {
+    for x in 0..=10 {
+        for y in 0..=10 {
+            for z in 0..=10 {
                 commands.spawn_bundle(ChunkBundle {
                     chunk: Chunk::new_empty(),
                     pbr: PbrBundle {

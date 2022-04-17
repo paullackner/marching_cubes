@@ -5,10 +5,11 @@ use bevy::{
         render_resource::{PrimitiveTopology, Buffer, BindGroup, ShaderModuleDescriptor, ShaderSource, BindGroupLayoutDescriptor, BindGroupLayoutEntry, ShaderStages, BindingType, BufferBindingType, BufferSize, BindGroupLayout, PipelineLayoutDescriptor, ComputePipelineDescriptor, ComputePipeline, BindGroupDescriptor, BindGroupEntry, BufferUsages, BufferDescriptor, ComputePassDescriptor, CommandEncoderDescriptor, MapMode}, 
         mesh::{Indices, VertexAttributeValues}, 
         RenderApp, 
-        render_graph::{RenderGraph, self}, renderer::{RenderDevice, RenderQueue}, RenderStage, render_component::ExtractComponent}, core_pipeline::node::MAIN_PASS_DEPENDENCIES, ecs::{entity::{self, Entities}, component::Components, archetype::Archetypes}, core::{cast_slice, Pod}};
+        render_graph::{RenderGraph, self}, renderer::{RenderDevice, RenderQueue}, RenderStage, render_component::ExtractComponent}, core_pipeline::node::MAIN_PASS_DEPENDENCIES, ecs::{entity::{self, Entities}, component::Components, archetype::Archetypes}, core::{cast_slice, Pod}, tasks::ComputeTaskPool};
 use bytemuck::Zeroable;
 use opensimplex_noise_rs::OpenSimplexNoise;
-use std::{borrow::Cow, num::NonZeroU32, iter::once};
+use std::iter::once;
+use std::time::Instant;
 
 use super::marching_cubes_tables::{TRI_TABLE, CORNER_INDEX_AFROM_EDGE, CORNER_INDEX_BFROM_EDGE};
 
@@ -145,7 +146,7 @@ impl ChunkCumputeBuffers {
         let atomics_buffer = render_device.create_buffer(&BufferDescriptor {
             label: None,
             size: (std::mem::size_of::<u32>() * 1) as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::MAP_READ,
+            usage: BufferUsages::STORAGE | BufferUsages::MAP_READ| BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -252,7 +253,7 @@ fn compute_mesh(
     mut meshes: ResMut<Assets<Mesh>>,
     mut query: Query<(&mut Chunk, &Handle<Mesh>)>,
 ) {
-    
+    let start = Instant::now();
     for (mut chunk, mesh_handle) in query.iter_mut() {
         if !chunk.dirty {continue;}
         let bytes: &[u8] = cast_slice(&chunk.points);
@@ -276,7 +277,9 @@ fn compute_mesh(
                 }
             ],
         });
-        
+
+        render_queue.write_buffer(&chunk_buffers.atomics_buffer, 0, cast_slice(&[0]));
+
         let mut command_encoder = render_device.create_command_encoder(&CommandEncoderDescriptor { label: Some("mesh command encoder") });
         {
             let mut pass = command_encoder.begin_compute_pass(&ComputePassDescriptor::default());
@@ -308,7 +311,7 @@ fn compute_mesh(
                 ])
             });
             
-        // println!("{:?}", vertices);
+        println!("{:?}", vertices);
         let length = vertices.len() as u32;
         let indices = (0..length as u32).collect::<Vec<u32>>();
         let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0]; length as usize];
@@ -321,6 +324,9 @@ fn compute_mesh(
         chunk.dirty = false;
     }
 
+    let elapsed = start.elapsed();
+    if elapsed.as_millis() < 1 {return}
+    println!("Mesh took: {:.2?}", elapsed);
 }
 
 
@@ -442,21 +448,25 @@ fn compute_mesh(
 
 fn set_points_system(
     mut query: Query<(&mut Chunk, &Transform)>,
+    pool: Res<ComputeTaskPool>,
     key: Res<Input<KeyCode>>,
 ) {
     if !key.just_pressed(KeyCode::G){
         return;
     }
-    let simplex = OpenSimplexNoise::new(Some(69420));
-    for (mut chunk, transform) in query.iter_mut() {
+    
+    let start = Instant::now();
 
+    let simplex = OpenSimplexNoise::new(Some(69420));
+    query.par_for_each_mut(&pool, 32, |(mut chunk, transform)| {
         for i in 0..BUFFER_SIZE-1 {
             chunk.points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
         }
-        chunk.dirty = true;   
-    }
+        chunk.dirty = true; 
+    });
 
-    println!("density calculated")
+    let elapsed = start.elapsed();
+    println!("Density took: {:.2?}", elapsed);
 }
 
 fn calc_iso(ws: Vec3, simplex: &OpenSimplexNoise) -> f32{
