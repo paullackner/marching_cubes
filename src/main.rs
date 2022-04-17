@@ -1,6 +1,6 @@
 mod world;
 
-use bevy::{prelude::*, render::{render_resource::PrimitiveTopology, renderer::RenderDevice}};
+use bevy::{prelude::*, render::{render_resource::{PrimitiveTopology, WgpuFeatures}, renderer::RenderDevice, options::WgpuOptions}, pbr::wireframe::{WireframePlugin, WireframeConfig, Wireframe}};
 use bevy_fly_camera::{self, FlyCamera, FlyCameraPlugin};
 use world::chunk::ChunkPlugin;
 
@@ -8,7 +8,13 @@ use crate::world::chunk::{ChunkBundle, Chunk, AXIS_SIZE, DirtyChunk};
 
 fn main() {
     App::new()
+        .insert_resource(Msaa { samples: 4 })
+        .insert_resource(WgpuOptions {
+            features: WgpuFeatures::POLYGON_MODE_LINE,
+            ..Default::default()
+        })
         .add_plugins(DefaultPlugins)
+        .add_plugin(WireframePlugin)
         .add_plugin(FlyCameraPlugin)
         .add_plugin(ChunkPlugin)
         .add_startup_system(setup)
@@ -20,9 +26,11 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
+    mut wireframe_config: ResMut<WireframeConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    wireframe_config.global = false;
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0})),
         transform: Transform::from_xyz(0.0, 0.0, -20.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -61,9 +69,9 @@ fn setup(
         ..Default::default()
     });
 
-    for x in 0..=0 {
+    for x in 0..=1 {
         for y in 0..=0 {
-            for z in 0..=0 {
+            for z in 0..=1 {
                 commands.spawn_bundle(ChunkBundle {
                     chunk: Chunk::new_empty(),
                     pbr: PbrBundle {
@@ -73,6 +81,7 @@ fn setup(
                         ..Default::default()
                     }
                 })
+                .insert(Wireframe)
                 .insert(DirtyChunk);
                 
             }
@@ -86,7 +95,7 @@ fn cursor_grab_system(
     key: Res<Input<KeyCode>>,
 ) {
     let window = windows.get_primary_mut().unwrap();
-
+    
     if btn.just_pressed(MouseButton::Left) {
         window.set_cursor_lock_mode(true);
         window.set_cursor_visibility(false);

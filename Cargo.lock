@@ -1836,6 +1836,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_fly_camera",
+ "bytemuck",
  "opensimplex_noise_rs",
  "rand",
 ]

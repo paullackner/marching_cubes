@@ -1,7 +1,11 @@
 struct Triangle {
-    a : vec3<f32>;
-    b : vec3<f32>;
-    c : vec3<f32>;
+    a : vec4<f32>;
+    b : vec4<f32>;
+    c : vec4<f32>;
+};
+
+struct Atomics {
+    tri_head: atomic<u32>;
 };
 
 struct Points {
@@ -16,6 +20,9 @@ struct Triangles {
 var<storage, read> points: Points;
 
 [[group(0), binding(1)]]
+var<storage, read_write> global_atomics: Atomics;
+
+[[group(0), binding(2)]]
 var<storage, read_write> triangles: Triangles;
 
 
@@ -368,6 +375,8 @@ fn march([[builtin(global_invocation_id)]] id: vec3<u32>) {
             break;
         }
         
+        var tri_count = atomicAdd(&global_atomics.tri_head, 1u);
+
         let a0 = corner_index_afrom_edge[tri_table[index][i] ];
         let b0 = corner_index_bfrom_edge[tri_table[index][i] ];
 
@@ -378,11 +387,11 @@ fn march([[builtin(global_invocation_id)]] id: vec3<u32>) {
         let b2 = corner_index_bfrom_edge[tri_table[index][i+2u] ];
 
         var triangle: Triangle = Triangle(
-            interpolate_verts(corners[a0], corners[b0]), 
-            interpolate_verts(corners[a1], corners[b1]), 
-            interpolate_verts(corners[a2], corners[b2]));
+            vec4<f32>(interpolate_verts(corners[a0], corners[b0]), 0.0 ), 
+            vec4<f32>(interpolate_verts(corners[a1], corners[b1]), 0.0 ), 
+            vec4<f32>(interpolate_verts(corners[a2], corners[b2]), 0.0 ),);
         
         
-        triangles.triangles[to_index(id+i32(i))] = triangle;
+        triangles.triangles[tri_count] = triangle;
     }
 }
