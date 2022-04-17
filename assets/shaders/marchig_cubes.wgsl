@@ -27,11 +27,11 @@ var<storage, read_write> triangles: Triangles;
 
 
 fn to_index(pos: vec3<i32>) -> i32 {
-    return i32(pos.y) * 32*32 + i32(pos.z) * 32 + i32(pos.x);
+    return i32(pos.x << 0u | pos.y << 10u | pos.z << 5u);
 }
 
 fn to_corner(pos: vec3<i32>) -> vec4<f32> {
-    return vec4<f32>(vec3<f32>(pos), points.data[to_index(pos)]);
+    return vec4<f32>(vec3<f32>(pos), f32(points.data[to_index(pos)]));
 }
 
 fn interpolate_verts(v1: vec4<f32>, v2: vec4<f32>) -> vec3<f32>{
@@ -72,6 +72,7 @@ var<private> corner_index_bfrom_edge: array<i32,12> = array<i32,12>(
     6,
     7
 );
+
 
 var<private> tri_table: array<array<i32,16>,256> = array<array<i32,16>,256>(
     array<i32,16>(
@@ -366,11 +367,12 @@ fn march([[builtin(global_invocation_id)]] id: vec3<u32>) {
     index = index | u32(corners[6].w >= 0.0) * (1u << 6u);
     index = index | u32(corners[7].w >= 0.0) * (1u << 7u);
 
+
     if (index == 0x00u || index == 0xffu) {
         return;
     }
 
-    for (var i = 0u; i < 5u; i = i+1u) {
+    for (var i = 0u; i < 12u; i = i+3u) {
         if (tri_table[index][i] == -1) {
             break;
         }
@@ -387,9 +389,9 @@ fn march([[builtin(global_invocation_id)]] id: vec3<u32>) {
         let b2 = corner_index_bfrom_edge[tri_table[index][i+2u] ];
 
         var triangle: Triangle = Triangle(
-            vec4<f32>(interpolate_verts(corners[a0], corners[b0]), 0.0 ), 
-            vec4<f32>(interpolate_verts(corners[a1], corners[b1]), 0.0 ), 
-            vec4<f32>(interpolate_verts(corners[a2], corners[b2]), 0.0 ),);
+            vec4<f32>(interpolate_verts(corners[a0], corners[b0]), f32(id.x) ), 
+            vec4<f32>(interpolate_verts(corners[a1], corners[b1]), f32(index) + f32(i) /10.0 ), 
+            vec4<f32>(interpolate_verts(corners[a2], corners[b2]), f32(id.z) ),);
         
         
         triangles.triangles[tri_count] = triangle;

@@ -81,7 +81,7 @@ fn setup(
                         ..Default::default()
                     }
                 })
-                .insert(Wireframe)
+                // .insert(Wireframe)
                 .insert(DirtyChunk);
                 
             }

@@ -11,7 +11,6 @@ use opensimplex_noise_rs::OpenSimplexNoise;
 use std::iter::once;
 use std::time::Instant;
 
-use super::marching_cubes_tables::{TRI_TABLE, CORNER_INDEX_AFROM_EDGE, CORNER_INDEX_BFROM_EDGE};
 
 pub const AXIS_SIZE: usize = 32;
 pub const BUFFER_SIZE: usize = AXIS_SIZE * AXIS_SIZE * AXIS_SIZE;
@@ -285,7 +284,7 @@ fn compute_mesh(
             let mut pass = command_encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.set_pipeline(&pipeline.march_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch(8, 8, 8)
+            pass.dispatch(4, 4, 4)
         }
         render_queue.submit(once(command_encoder.finish()));
 
@@ -308,10 +307,9 @@ fn compute_mesh(
                 x.a.xyz().to_array(),
                 x.b.xyz().to_array(),
                 x.c.xyz().to_array(),
-                ])
+                ]);
             });
             
-        println!("{:?}", vertices);
         let length = vertices.len() as u32;
         let indices = (0..length as u32).collect::<Vec<u32>>();
         let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0]; length as usize];
@@ -328,123 +326,6 @@ fn compute_mesh(
     if elapsed.as_millis() < 1 {return}
     println!("Mesh took: {:.2?}", elapsed);
 }
-
-
-
-
-
-// struct DispatchChunk;
-
-// impl render_graph::Node for DispatchChunk {
-
-//     fn run(
-//         &self,
-//         _graph: &mut render_graph::RenderGraphContext,
-//         render_context: &mut bevy::render::renderer::RenderContext,
-//         world: &World,
-//     ) -> Result<(), render_graph::NodeRunError> {
-//         let pipeline = world.get_resource::<ChunkPipeline>().unwrap();
-//         let group = &world.get_resource::<ChunkBindGroup>().unwrap().0;
-
-//         let mut pass = render_context
-//             .command_encoder
-//             .begin_compute_pass(&ComputePassDescriptor::default());
-        
-//         pass.set_pipeline(&pipeline.march_pipeline);
-        
-//         {
-//             pass.set_bind_group(0, group, &[]);
-//             pass.dispatch(8, 8, 8)
-//         }
-
-//         Ok(())
-//     }
-// }
-
-
-
-
-
-
-
-// fn march_cubes_system(
-//     mut query: Query<(&Handle<Mesh>, &mut Chunk)>,
-//     mut meshes: ResMut<Assets<Mesh>>,
-// ) {
-//     for (mesh_handle, mut chunk) in query.iter_mut() {
-//         if !chunk.dirty {continue;}
-//         let mut vertices: Vec<[f32; 3]> = Vec::new();
-
-//         for i in 0..BUFFER_SIZE-1 {
-//                 if from_index(i).max_element() >= AXIS_SIZE as i32 -1 {continue;}
-//                 let points = chunk.clone().get_cube(from_index(i).as_vec3());
-//                 let mut triangles: Vec<Triangle> = Vec::with_capacity(4);
-
-
-//                 let mut index = 0;
-
-//                 if points[0].w >= ISO_LEVEL {index |= 1}
-//                 if points[1].w >= ISO_LEVEL {index |= 2}
-//                 if points[2].w >= ISO_LEVEL {index |= 4}
-//                 if points[3].w >= ISO_LEVEL {index |= 8}
-//                 if points[4].w >= ISO_LEVEL {index |= 16}
-//                 if points[5].w >= ISO_LEVEL {index |= 32}
-//                 if points[6].w >= ISO_LEVEL {index |= 64}
-//                 if points[7].w >= ISO_LEVEL {index |= 128}
-
-//                 if index == 0 { continue; }
-
-//                 for i in (0..15).step_by(3) {
-
-//                     if TRI_TABLE[index][i] == -1 {
-//                         break;
-//                     }
-
-//                     let a0 = CORNER_INDEX_AFROM_EDGE[TRI_TABLE[index][i] as usize];
-//                     let b0 = CORNER_INDEX_BFROM_EDGE[TRI_TABLE[index][i] as usize];
-
-//                     let a1 = CORNER_INDEX_AFROM_EDGE[TRI_TABLE[index][i+1] as usize];
-//                     let b1 = CORNER_INDEX_BFROM_EDGE[TRI_TABLE[index][i+1] as usize];
-
-//                     let a2 = CORNER_INDEX_AFROM_EDGE[TRI_TABLE[index][i+2] as usize];
-//                     let b2 = CORNER_INDEX_BFROM_EDGE[TRI_TABLE[index][i+2] as usize];
-//                     let triangle = Triangle{
-//                         a: interpolate_verts(points[a0 as usize], points[b0 as usize]),
-//                         b: interpolate_verts(points[a1 as usize], points[b1 as usize]),
-//                         c: interpolate_verts(points[a2 as usize], points[b2 as usize]),
-//                     };
-//                     triangles.push(triangle);
-
-//                     // vertices.push(interpolate_verts(points[a0 as usize], points[b0 as usize]).into());
-//                     // vertices.push(interpolate_verts(points[a1 as usize], points[b1 as usize]).into());
-//                     // vertices.push(interpolate_verts(points[a2 as usize], points[b2 as usize]).into());
-//                 }
-
-//                 triangles.iter().for_each(|x| {
-//                     vertices.append(&mut vec![
-//                         x.a.to_array(),
-//                         x.b.to_array(),
-//                         x.c.to_array()
-//                     ])
-//                 });
-//         }
-//         let length = vertices.len() as u32;
-//         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
-//         let indices = (0..length).collect::<Vec<u32>>();
-//         let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0]; length as usize];
-
-
-//         mesh.set_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
-//         mesh.compute_flat_normals();
-//         mesh.set_indices(Some(Indices::U32(indices)));
-//         mesh.set_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        
-
-        
-//         *meshes.get_mut(mesh_handle.id).unwrap() = mesh;
-//         chunk.dirty = false;
-//     }
-// }
 
 fn set_points_system(
     mut query: Query<(&mut Chunk, &Transform)>,
@@ -472,9 +353,9 @@ fn set_points_system(
 fn calc_iso(ws: Vec3, simplex: &OpenSimplexNoise) -> f32{
     let mut density = -ws.y;
 
-    let mut freq = 0.005;
-    let mut amplitude = 15.0;
-    for _ in 0..=8 {
+    let mut freq = 0.015;
+    let mut amplitude = 20.0;
+    for _ in 0..=9 {
         density += (simplex.eval_3d(ws.x as f64 * freq, ws.y as f64 * freq, ws.z as f64 * freq) as f32 + 1.0) * amplitude;
         freq *= 2.0;
         amplitude *= 0.5;
