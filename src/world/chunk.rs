@@ -15,6 +15,8 @@ use std::{iter::once, sync::Arc, ops::RangeInclusive};
 use std::time::Instant;
 use futures_lite::future;
 
+use crate::noise::opensimplex::OpenSimplex;
+
 
 pub const AXIS_SIZE: usize = 32;
 pub const BUFFER_SIZE: usize = AXIS_SIZE * AXIS_SIZE * AXIS_SIZE;
@@ -87,9 +89,9 @@ impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
         app
             .init_resource::<ChunkPipeline>()
-            .insert_resource(Arc::new(OpenSimplexNoise::new(Some(69420))))
+            // .insert_resource(Arc::new(OpenSimplexNoise::new(Some(69420))))
             .insert_resource(ChunkSpawnTimer(Timer::from_seconds(1.0, true)))
-            .add_system_to_stage(CoreStage::First, assign_generated_chunks)
+            // .add_system_to_stage(CoreStage::First, assign_generated_chunks)
             .add_system_to_stage(CoreStage::PreUpdate, chunk_generation_system)
             .add_system_to_stage(CoreStage::Update, compute_mesh)
             .add_system_to_stage(CoreStage::PostUpdate, spawn_chunk_system);
@@ -188,10 +190,7 @@ impl FromWorld for ChunkPipeline {
             });
 
         let chunk_buffers = ChunkCumputeBuffers::new_empty(render_device);
-        
-        
-    
-        
+       
         let pipeline_layout = render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&buffer_bind_group_layout],
@@ -321,7 +320,7 @@ fn spawn_chunk_system(
     for transform in cameras.iter() {
         let cam_position = (transform.translation / (AXIS_SIZE-1) as f32).floor();
         let range_h: RangeInclusive<i32> = -5..=5;
-        let range_v: RangeInclusive<i32> = -1..=2;
+        let range_v: RangeInclusive<i32> = -2..=2;
         
         for x in range_h.clone() {
             for y in range_v.clone() {
@@ -347,40 +346,42 @@ fn spawn_chunk_system(
 }
 
 fn chunk_generation_system(
-    query: Query<(Entity, &Transform), Added<Chunk>,>,
+    mut query: Query<(&mut Chunk, &Transform), Added<Chunk>>,
     pool: Res<AsyncComputeTaskPool>,
     key: Res<Input<KeyCode>>,
-    simplex: Res<Arc<OpenSimplexNoise>>,
+    simplex: Res<OpenSimplex>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
     mut commands: Commands
 ) {
     // if !key.just_pressed(KeyCode::G){
     //     return;
     // }
     if query.is_empty() {return}
-    
-    for (entity, transform) in query.iter() {
-        let simplex = simplex.clone();
-        let transform = transform.clone();
-        let task = pool.spawn(async move {
-            let mut points = [0.0f32 ;BUFFER_SIZE];
-            for i in 0..BUFFER_SIZE-1 {
-                points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
-            }
-            Chunk {
-                points,
-                dirty: true,
-            }
-        });
-        commands.entity(entity).insert(task);
+    let start = Instant::now();
+
+    for (mut chunk, transform) in query.iter_mut() {
+
+        chunk.points = simplex.compute_chunk(transform.translation, &render_device, &render_queue);
+        // println!("{:?}", chunk.points);
+        chunk.dirty = true;
+        // let simplex = simplex.clone();
+        // let transform = transform.clone();
+        // let task = pool.spawn(async move {
+        //     let mut points = [0.0f32 ;BUFFER_SIZE];
+        //     for i in 0..BUFFER_SIZE-1 {
+        //         points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
+        //     }
+        //     Chunk {
+        //         points,
+        //         dirty: true,
+        //     }
+        // });
+        // commands.entity(entity).insert(task);
     }
 
-    // query.par_for_each_mut(&pool, 32, |(mut chunk, transform)| {
-    //     for i in 0..BUFFER_SIZE-1 {
-    //         chunk.points[i] = calc_iso(transform.translation + from_index(i).as_vec3(), &simplex);
-    //     }
-    //     chunk.dirty = true; 
-    // });
-
+    let elapsed = start.elapsed();
+    println!("gen took: {:.2?}", elapsed);
 }
 
 fn assign_generated_chunks(

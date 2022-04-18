@@ -1,4 +1,5 @@
 mod world;
+mod noise;
 
 use bevy::{
     prelude::*, 
@@ -7,9 +8,8 @@ use bevy::{
     pbr::wireframe::*,
 };
 use bevy_fly_camera::*;
+use noise::NoisePlugin;
 use world::chunk::ChunkPlugin;
-
-use crate::world::chunk::{ChunkBundle, Chunk, AXIS_SIZE};
 
 fn main() {
     App::new()
@@ -22,6 +22,7 @@ fn main() {
         .add_plugin(WireframePlugin)
         .add_plugin(FlyCameraPlugin)
         .add_plugin(ChunkPlugin)
+        .add_plugin(NoisePlugin)
         .add_startup_system(setup)
         .add_system(cursor_grab_system)
         // .add_system(terrain_edit)
