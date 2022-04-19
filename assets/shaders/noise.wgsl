@@ -24,36 +24,98 @@ var<uniform> pos: Position;
 [[group(0), binding(1)]]
 var<storage, read_write> values: Values;
 
-let one: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+let one: vec4<f32> = vec4<f32>(1.0, 1.0, 1.0, 1.0);
 let zero: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
 
 fn to_index(pos: vec3<u32>) -> i32 {
     return i32(pos.x << 0u | pos.y << 10u | pos.z << 5u);
 }
 
-fn mod289(x: vec4<f32>) -> vec4<f32>{return x - floor(x * (1.0 / 289.0)) * 289.0;}
-fn perm(x: vec4<f32>) -> vec4<f32>{return mod289(((x * 34.0) + 1.0) * x);}
+fn permute(x: vec4<f32>) -> vec4<f32> {
+    var temp: vec4<f32> = 289.0 * one;
+    return modf(((x*34.0) + one) * x, &temp);
+}
 
-fn noise(pos: vec3<f32>) -> f32{
-    let a: vec3<f32> = floor(pos);
-    var d : vec3<f32> = fract(pos);
-    d = d * d * (3.0 - 2.0 * d);
+fn taylorInvSqrt(r: vec4<f32>) -> vec4<f32> {
+    return 1.79284291400159 * one - 0.85373472095314 * r;
+}
 
-    let b : vec4<f32>= a.xxyy + vec4<f32>(0.0, 1.0, 0.0, 1.0);
-    let k1: vec4<f32> = perm(b.xyxy);
-    let k2: vec4<f32> = perm(k1.xyxy + b.zzww);
+fn noise(v: vec3<f32>) -> f32{
+    let C = vec2<f32>(1.0/6.0, 1.0/3.0);
+    let D = vec4<f32>(0.0, 0.5, 1.0, 2.0);
 
-    let c : vec4<f32>= k2 + a.zzzz;
-    let k3: vec4<f32> = perm(c);
-    let k4: vec4<f32> = perm(c + 1.0);
+    // First corner
+    //TODO: use the splat operations when available
+    let vCy = dot(v, C.yyy);
+    var i: vec3<f32> = floor(v + vec3<f32>(vCy, vCy, vCy));
+    let iCx = dot(i, C.xxx);
+    let x0 = v - i + vec3<f32>(iCx, iCx, iCx);
 
-    let o1: vec4<f32> = fract(k3 * (1.0 / 41.0));
-    let o2: vec4<f32> = fract(k4 * (1.0 / 41.0));
+    // Other corners
+    let g = step(x0.yzx, x0.xyz);
+    let l = (vec3<f32>(1.0, 1.0, 1.0) - g).zxy;
+    let i1 = min(g, l);
+    let i2 = max(g, l);
 
-    let o3: vec4<f32> = o2 * d.z + o1 * (1.0 - d.z);
-    let o4: vec2<f32> = o3.yw * d.x + o3.xz * (1.0 - d.x);
+    //   x0 = x0 - 0.0 + 0.0 * C.xxx;
+    //   x1 = x0 - i1  + 1.0 * C.xxx;
+    //   x2 = x0 - i2  + 2.0 * C.xxx;
+    //   x3 = x0 - 1.0 + 3.0 * C.xxx;
+    let x1 = x0 - i1 + C.xxx;
+    let x2 = x0 - i2 + C.yyy; // 2.0*C.x = 1/3 = C.y
+    let x3 = x0 - D.yyy; // -1.0+3.0*C.x = -0.5 = -D.y
 
-    return o4.y * d.y + o4.x * (1.0 - d.y);
+    // Permutations
+    var temp: vec3<f32> = 289.0 * one.xyz;
+    i = modf(i, &temp);
+    let p = permute(
+        permute(
+            permute(i.zzzz + vec4<f32>(0.0, i1.z, i2.z, 1.0))
+            + i.yyyy + vec4<f32>(0.0, i1.y, i2.y, 1.0))
+        + i.xxxx + vec4<f32>(0.0, i1.x, i2.x, 1.0));
+
+    // Gradients: 7x7 points over a square, mapped onto an octahedron.
+    // The ring size 17*17 = 289 is close to a multiple of 49 (49*6 = 294)
+    let n_ = 0.142857142857;// 1.0/7.0
+    let ns = n_ * D.wyz - D.xzx;
+
+    let j = p - 49.0 * floor(p * ns.z * ns.z);//  mod(p,7*7)
+
+    let x_ = floor(j * ns.z);
+    let y_ = floor(j - 7.0 * x_);// mod(j,N)
+
+    var x: vec4<f32> = x_ *ns.x + ns.yyyy;
+    var y: vec4<f32> = y_ *ns.x + ns.yyyy;
+    let h = one - abs(x) - abs(y);
+
+    let b0 = vec4<f32>(x.xy, y.xy);
+    let b1 = vec4<f32>(x.zw, y.zw);
+
+    //vec4 s0 = vec4(lessThan(b0,0.0))*2.0 - one;
+    //vec4 s1 = vec4(lessThan(b1,0.0))*2.0 - one;
+    let s0 = floor(b0)*2.0 + one;
+    let s1 = floor(b1)*2.0 + one;
+    let sh = -step(h, 0.0 * one);
+
+    let a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+    let a1 = b1.xzyw + s1.xzyw*sh.zzww;
+
+    var p0: vec3<f32> = vec3<f32>(a0.xy, h.x);
+    var p1: vec3<f32> = vec3<f32>(a0.zw, h.y);
+    var p2: vec3<f32> = vec3<f32>(a1.xy, h.z);
+    var p3: vec3<f32> = vec3<f32>(a1.zw, h.w);
+
+    //Normalise gradients
+    let norm = taylorInvSqrt(vec4<f32>(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 = p0 * norm.x;
+    p1 = p1 * norm.y;
+    p2 = p2 * norm.z;
+    p3 = p3 * norm.w;
+
+    // Mix final noise value
+    var m: vec4<f32> = max(0.6 * one - vec4<f32>(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0 * one);
+    m = m * m;
+    return 9.0 * dot(m*m, vec4<f32>(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
 
 [[stage(compute), workgroup_size(8, 8, 8)]]

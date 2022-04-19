@@ -15,7 +15,10 @@ use std::{iter::once, sync::Arc, ops::RangeInclusive};
 use std::time::Instant;
 use futures_lite::future;
 
-use crate::noise::opensimplex::OpenSimplex;
+use crate::{
+    noise::opensimplex::OpenSimplex,
+    materials::chunk_material::*
+};
 
 
 pub const AXIS_SIZE: usize = 32;
@@ -72,7 +75,7 @@ pub struct ChunkBundle {
     pub chunk: Chunk,
 
     #[bundle]
-    pub pbr: PbrBundle,
+    pub mesh_bundle: MaterialMeshBundle<ChunkMaterial>,
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -88,6 +91,7 @@ pub struct ChunkPlugin;
 impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
         app
+            .add_plugin(MaterialPlugin::<ChunkMaterial>::default())
             .init_resource::<ChunkPipeline>()
             // .insert_resource(Arc::new(OpenSimplexNoise::new(Some(69420))))
             .insert_resource(ChunkSpawnTimer(Timer::from_seconds(1.0, true)))
@@ -308,7 +312,7 @@ fn spawn_chunk_system(
     chunks: Query<&Transform, With<Chunk>>,
     mut wireframe_config: ResMut<WireframeConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<ChunkMaterial>>,
     time: Res<Time>,
     mut timer: ResMut<ChunkSpawnTimer>,
 ) {
@@ -327,14 +331,15 @@ fn spawn_chunk_system(
                 for z in range_h.clone() {
                     let pos  = cam_position + Vec3::new(x as f32, y as f32, z as f32);
                     
+                    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
                     if !chunk_positions.contains(&pos) {
                         commands.spawn_bundle(ChunkBundle {
                             chunk: Chunk::new_empty(),
 
-                            pbr: PbrBundle {
-                                mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
+                            mesh_bundle: MaterialMeshBundle {
+                                mesh: meshes.add(mesh),
                                 transform: Transform::from_xyz((AXIS_SIZE-1) as f32  * pos.x , (AXIS_SIZE-1) as f32 * pos.y as f32, (AXIS_SIZE-1) as f32 * pos.z),
-                                material: materials.add(Color::DARK_GREEN.into()),
+                                material: materials.add(ChunkMaterial),
                                 ..Default::default()
                             },
                         });
