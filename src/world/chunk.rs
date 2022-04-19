@@ -197,7 +197,7 @@ impl FromWorld for ChunkPipeline {
             push_constant_ranges: &[],
         });
         
-        let march_pipeline = render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+        let march_pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             module: &shader,
@@ -286,10 +286,10 @@ fn compute_mesh(
         let length = vertices.len() as u32;
         let indices = (0..length as u32).collect::<Vec<u32>>();
         let uvs: Vec<[f32; 2]> = vec![[0.0, 0.0]; length as usize];
-        mesh.set_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
         mesh.compute_flat_normals();
         mesh.set_indices(Some(Indices::U32(indices)));
-        mesh.set_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
 
         *meshes.get_mut(mesh_handle).unwrap() = mesh;
         chunk.dirty = false;

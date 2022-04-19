@@ -147,7 +147,7 @@ impl FromWorld for OpenSimplex {
             push_constant_ranges: &[],
         });
         
-        let simplex_pipeline = render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+        let simplex_pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             module: &shader,

@@ -1,12 +1,8 @@
 mod world;
 mod noise;
+mod materials;
 
-use bevy::{
-    prelude::*, 
-    render::{render_resource::{PrimitiveTopology, WgpuFeatures}, 
-    options::WgpuOptions}, 
-    pbr::wireframe::*,
-};
+use bevy::{render::{settings::WgpuSettings, render_resource::{PrimitiveTopology, WgpuFeatures}}, prelude::*, pbr::wireframe::*};
 use bevy_fly_camera::*;
 use noise::NoisePlugin;
 use world::chunk::ChunkPlugin;
@@ -14,7 +10,7 @@ use world::chunk::ChunkPlugin;
 fn main() {
     App::new()
         .insert_resource(Msaa { samples: 4 })
-        .insert_resource(WgpuOptions {
+        .insert_resource(WgpuSettings {
             features: WgpuFeatures::POLYGON_MODE_LINE,
             ..Default::default()
         })

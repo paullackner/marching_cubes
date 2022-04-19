@@ -9,8 +9,8 @@ edition = "2021"
 dynamic = ["bevy/dynamic"]
 
 [dependencies]
-bevy = "0.6.1"
-bevy_fly_camera = "0.8.0"
+bevy = "0.7.0"
+bevy_fly_camera = {git = "https://github.com/PikminGuts92/bevy_fly_camera/", branch = "bevy-0.7"}
 rand = "0.8.5"
 opensimplex_noise_rs = "0.3.0"
 bytemuck = "1.8.0"
