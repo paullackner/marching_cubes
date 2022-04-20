@@ -372,7 +372,7 @@ fn march([[builtin(global_invocation_id)]] id: vec3<u32>) {
         return;
     }
 
-    for (var i = 0u; i < 12u; i = i+3u) {
+    for (var i = 0u; i < 15u; i = i+3u) {
         if (tri_table[index][i] == -1) {
             break;
         }

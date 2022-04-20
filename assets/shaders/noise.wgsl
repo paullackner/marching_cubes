@@ -118,17 +118,117 @@ fn noise(v: vec3<f32>) -> f32{
     return 9.0 * dot(m*m, vec4<f32>(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
 
+
+fn hash(p: vec2<f32>) -> vec2<f32> // replace this by something better
+{
+    let p2 = vec2<f32>( dot(p,vec2<f32>(127.1,311.7)), dot(p,vec2<f32>(269.5,183.3)) );
+    return -1.0 + 2.0*fract(sin(p2)*43758.5453123);
+}
+
+fn simplex2d(p: vec2<f32>) -> f32
+{
+    let K1 = 0.366025404; // (sqrt(3)-1)/2;
+    let K2 = 0.211324865; // (3-sqrt(3))/6;
+    let i = floor( p + (p.x+p.y)*K1 );
+    let a = p - i + (i.x+i.y)*K2;
+    let o = step(a.yx,a.xy);
+    let b = a - o + K2;
+    let c = a - 1.0 + 2.0*K2;
+    let h = max( 0.5-vec3<f32>(dot(a,a), dot(b,b), dot(c,c) ), vec3<f32>(0.) );
+    let n = h*h*h*h*vec3<f32>( dot(a,hash(i+0.0)), dot(b,hash(i+o)), dot(c,hash(i+1.0)));
+    return dot( n, vec3<f32>(70.0) );
+}
+
+
+// Simplex Noise 3D: https://www.shadertoy.com/view/XsX3zB
+
+fn random3(c: vec3<f32>) -> vec3<f32>
+{
+    var j = 4096.0*sin(dot(c,vec3<f32>(17.0, 59.4, 15.0)));
+    var r = vec3<f32>(0.);
+    r.z = fract(512.0*j);
+    j = j * .125;
+    r.x = fract(512.0*j);
+    j = j * .125;
+    r.y = fract(512.0*j);
+    return r - 0.5;
+}
+
+let F3 = 0.3333333;
+let G3 = 0.1666667;
+
+fn simplex3d(p: vec3<f32>) -> f32
+{
+    // 1. find current tetrahedron T and it's four vertices */
+
+    // calculate s and x */
+    let s = floor(p + dot(p, vec3<f32>(F3)));
+    let x = p - s + dot(s, vec3<f32>(G3));
+
+    // calculate i1 and i2 */
+    let e = step(vec3<f32>(0.0), x - x.yzx);
+    let i1 = e*(1.0 - e.zxy);
+    let i2 = 1.0 - e.zxy*(1.0 - e);
+
+    // x1, x2, x3 */
+    let x1 = x - i1 + G3;
+    let x2 = x - i2 + 2.0*G3;
+    let x3 = x - 1.0 + 3.0*G3;
+
+    // 2. find four surflets and store them in d */
+    var w = vec4<f32>(0.);
+    var d = vec4<f32>(0.);
+
+    // calculate surflet weights */
+    w.x = dot(x, x);
+    w.y = dot(x1, x1);
+    w.z = dot(x2, x2);
+    w.w = dot(x3, x3);
+
+    // w fades from 0.6 at the center of the surflet to 0.0 at the margin */
+    w = max(0.6 - w, vec4<f32>(0.0));
+
+    // calculate surflet components */
+    d.x = dot(random3(s), x);
+    d.y = dot(random3(s + i1), x1);
+    d.z = dot(random3(s + i2), x2);
+    d.w = dot(random3(s + 1.0), x3);
+
+    // multiply d by w^4 */
+    w = w * w;
+    w = w * w;
+    d = d * w;
+
+    // 3. return the sum of the four surflets */
+    return dot(d, vec4<f32>(52.0));
+}
+
+// const matrices for 3d rotation */
+let rot1 = mat3x3<f32>(vec3<f32>(-0.37, 0.36, 0.85), vec3<f32>(-0.14,-0.93, 0.34), vec3<f32>(0.92, 0.01,0.4));
+let rot2 = mat3x3<f32>(vec3<f32>(-0.55,-0.39, 0.74), vec3<f32>( 0.33,-0.91,-0.24), vec3<f32>(0.77, 0.12,0.63));
+let rot3 = mat3x3<f32>(vec3<f32>(-0.71, 0.52,-0.47), vec3<f32>(-0.08,-0.72,-0.68), vec3<f32>(-0.7,-0.45,0.56));
+
+// directional artifacts can be reduced by rotating each octave */
+fn simplex3d_fractal(m: vec3<f32>) -> f32
+{
+    return   0.5333333 * simplex3d(m * rot1)
+            +0.2666667*simplex3d(2.0 * m * rot2)
+            +0.1333333*simplex3d(4.0 * m * rot3)
+            +0.0666667*simplex3d(8.0 * m );
+}
+
 [[stage(compute), workgroup_size(8, 8, 8)]]
 fn main([[builtin(global_invocation_id)]] id: vec3<u32>) {
     let pos: vec3<i32> = vec3<i32>(pos.pos.xyz) + vec3<i32>(id);
     
-    var amp = 100.0;
-    var freq = 0.002;
+    var amp = 140.0;
+    var freq = 0.003;
 
     var density: f32 = f32(-pos.y);
+    // density = 50.0 - distance(vec3<f32>(pos), vec3<f32>(0.0, -50.0, 0.0));
 
     for (var i = 0; i < 10; i = i+1) {
-        density = density + noise(vec3<f32>(pos) * freq) * amp;
+        density = density + simplex3d(vec3<f32>(pos) * freq) * amp;
         amp = amp * 0.5;
         freq = freq * 2.0;
     }    

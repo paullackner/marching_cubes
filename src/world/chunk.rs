@@ -6,7 +6,7 @@ use bevy::{
         mesh::Indices,
         renderer::{RenderDevice, RenderQueue}
     }, 
-    core::{cast_slice, Pod}, tasks::{ComputeTaskPool, AsyncComputeTaskPool, Task}, pbr::wireframe::WireframeConfig,
+    core::{cast_slice, Pod}, tasks::{ComputeTaskPool, AsyncComputeTaskPool, Task}, pbr::wireframe::*,
 };
 
 use bytemuck::Zeroable;
@@ -17,7 +17,7 @@ use futures_lite::future;
 
 use crate::{
     noise::opensimplex::OpenSimplex,
-    materials::chunk_material::*
+    materials::chunk_material::*,
 };
 
 
@@ -93,9 +93,7 @@ impl Plugin for ChunkPlugin {
         app
             .add_plugin(MaterialPlugin::<ChunkMaterial>::default())
             .init_resource::<ChunkPipeline>()
-            // .insert_resource(Arc::new(OpenSimplexNoise::new(Some(69420))))
             .insert_resource(ChunkSpawnTimer(Timer::from_seconds(1.0, true)))
-            // .add_system_to_stage(CoreStage::First, assign_generated_chunks)
             .add_system_to_stage(CoreStage::PreUpdate, chunk_generation_system)
             .add_system_to_stage(CoreStage::Update, compute_mesh)
             .add_system_to_stage(CoreStage::PostUpdate, spawn_chunk_system);
@@ -331,18 +329,18 @@ fn spawn_chunk_system(
                 for z in range_h.clone() {
                     let pos  = cam_position + Vec3::new(x as f32, y as f32, z as f32);
                     
-                    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
                     if !chunk_positions.contains(&pos) {
                         commands.spawn_bundle(ChunkBundle {
                             chunk: Chunk::new_empty(),
 
                             mesh_bundle: MaterialMeshBundle {
-                                mesh: meshes.add(mesh),
+                                mesh: meshes.add(Mesh::new(PrimitiveTopology::TriangleList)),
                                 transform: Transform::from_xyz((AXIS_SIZE-1) as f32  * pos.x , (AXIS_SIZE-1) as f32 * pos.y as f32, (AXIS_SIZE-1) as f32 * pos.z),
                                 material: materials.add(ChunkMaterial),
                                 ..Default::default()
                             },
-                        });
+                        })
+                        ;
                     }
                 }
             }

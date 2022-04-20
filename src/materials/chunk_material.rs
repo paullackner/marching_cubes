@@ -85,6 +85,7 @@ impl Material for ChunkMaterial {
     ) -> Result<(), SpecializedMeshPipelineError> {
         let vertex_layout = layout.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
         ])?;
         descriptor.vertex.buffers = vec![vertex_layout];
         Ok(())
