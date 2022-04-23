@@ -50,7 +50,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.clip_position = view.view_proj * world_position;
     out.color = vec4<f32>(0.5, height , 1.0 - height, 1.0);
     out.world_normal = skin_normals(mesh.model, vertex.normal);
-    out.position = world_position;
+    out.world_position = world_position;
     
     return out;
 }
